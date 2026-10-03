@@ -187,6 +187,26 @@ class OpenResearch(Research):
             issues.append("Duplicate research question")
         return issues
 
+    def planning_history(self):
+        """Bound planning context without discarding the immutable full review evidence."""
+        topics = self.state["topic_pool"]
+        return [{"key": t["key"], "question": t["topic"]["question"][:400], "status": t["status"],
+                 "issues": t.get("issues", [])[:4],
+                 "review_feedback": [{"alias": r["alias"], "verdict": r["verdict"], "reason": r["reason"][:180],
+                                      "issues": [issue[:220] for issue in r["issues"][:4]]}
+                                     for r in t.get("review_feedback", [])]}
+                for t in topics[-10:]]
+
+    def execution_contract(self):
+        return {"method_schemas": {a["id"]: method_schema(a["domain"]) for a in self.campaign["assets"]},
+                "max_development_candidates": self.campaign["max_candidates"],
+                "minimum_gain": self.campaign["min_gain"],
+                "selection": "Adapt methods on development only; strict gain > minimum_gain replaces incumbent; ties retain incumbent. Baseline can remain selected.",
+                "formal_evaluation": "One frozen selected-versus-baseline contrast, 10000 paired scenario bootstrap replicates, seed 20261003; scenario means average queries. Gain criterion: lower 95% CI > minimum_gain. No formal grid-wide testing.",
+                "scope": "No subgroup regression, causal identification, per-type hypothesis tests, additional metrics or reader responses in this executor. Do not promise them in the question/falsifier.",
+                "stale_packing": "User turns only. BM25 score divided by query maximum; recency is normalized turn index; change is a binary cue. Descending combined score, then later-index tie break. Greedily skip turns that exceed remaining UTF-8 bytes; emit selected turns chronologically. Literal matching uses lowercased collapsed whitespace.",
+                "review_stage": "This is topic selection. Exact new method parameters are specified and separately reviewed at design stage before candidate execution; the primary endpoint, selection and inference rules above are already fixed."}
+
     def proposal(self):
         schema = object_schema({"title": TEXT, "hypothesis": TEXT, "falsifier": TEXT,
             "method": method_schema(self.config["domain"]), "limitations": TEXT,
@@ -213,7 +233,8 @@ class OpenResearch(Research):
             raise ValueError("Formal evaluation is one-way; no return to topic/method search")
         if phase == "search_plan":
             plan = self.ask(f"search-plan-{rnd}", c["roles"]["director"], {"role": "search_plan", "brief": c["brief"],
-                "assets": c["assets"], "capabilities": CAPABILITIES, "previous_topics": s["topic_pool"],
+                "assets": c["assets"], "capabilities": CAPABILITIES, "previous_topics": self.planning_history(),
+                "execution_contract": self.execution_contract(),
                 "task": "Generate diverse focused literature queries and one query looking for already solved/contradictory work. "
                 "Use concise English scientific keyword queries (two to five terms), not sentences or URLs. "
                 "Do not reveal secrets or dataset rows in public queries. Select questions independently of formal evaluation results."}, SEARCH)
@@ -247,7 +268,9 @@ class OpenResearch(Research):
                 return
             result = self.ask(f"topics-{rnd}", c["roles"]["director"], {"role": "topics", "brief": c["brief"],
                 "assets": c["assets"], "capabilities": CAPABILITIES, "resources": c["resources"], "sources": self.sources,
-                "history": s["topic_pool"], "task": "Propose two to five substantively different falsifiable research questions. "
+                "history": self.planning_history(), "execution_contract": self.execution_contract(),
+                "task": "Propose two to five substantively different falsifiable research questions. "
+                "Every question and falsifier must match the fixed executable analysis contract; do not invent a different testing procedure. "
                 "Give closest-work differences and exact source excerpts; an abstract is not full-text verification. "
                 "Priority measures relevance and information value, never expected positive results. Unsupported topics must retain honest requirements. "
                 "Do not assume novelty from missing search results. Independent reviewers must assess whether available source depth suffices."}, TOPICS)
@@ -263,6 +286,7 @@ class OpenResearch(Research):
                 return
             verdict = self.review("topic-" + item["key"], {"topic": item["topic"], "brief": c["brief"],
                 "capabilities": CAPABILITIES, "sources": self.sources, "assets": c["assets"],
+                "execution_contract": self.execution_contract(),
                 "task": "Judge significance, falsifiability, closest prior work, source depth and whether the registered metric actually tests the hypothesis. "
                 "Reject trivial parameter sweeps presented as novel work, already answered questions, unjustified independence, unsupported gaps and resources. "
                 "An abstract may justify an exploratory audit, but cannot establish a full-text novelty claim."})

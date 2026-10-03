@@ -345,3 +345,18 @@ def test_open_selection_routes_to_stale_executor_without_label_prompts(tmp_path)
     assert state["status"] == "completed" and state["analysis"]["metric"] == "literal_update_inclusion"
     assert '"M_new"' not in json.dumps(worker.calls)
     assert (root / "evidence/selected-evaluation/contexts.json").is_file()
+
+
+def test_planning_history_is_bounded_without_changing_full_audit(tmp_path):
+    root = setup(tmp_path)
+    controller = OpenResearch(root, Spy())
+    controller.campaign = read_json(root / "inputs/config.json")
+    controller.state = read_json(root / "autonomy-state.json")
+    controller.state["topic_pool"] = [{"key": str(i), "topic": {"question": "q" * 2000}, "status": "rejected",
+        "issues": [], "review_feedback": [{"alias": "kimi", "verdict": "revise", "reason": "r" * 2000,
+                                           "issues": ["x" * 2000] * 12}]} for i in range(25)]
+    before = deepcopy(controller.state)
+    history = controller.planning_history()
+    assert len(history) == 10 and len(json.dumps(history).encode()) < 20000
+    assert controller.state == before
+    assert controller.execution_contract()["minimum_gain"] == .01

@@ -301,6 +301,31 @@ class DashboardStore:
                         value["alerts"].append({"source": state["id"], "message": state.get("last_error") or state.get("stop_reason") or state["status"]})
                 except (OSError, ValueError, KeyError, TypeError):
                     value["alerts"].append({"source": path.parent.name, "message": "自主研究记录暂不可读"})
+            for path in sorted((self.root / "projects").glob("*/reader-study-state.json")):
+                try:
+                    state = self.read(path)
+                    outputs = []
+                    for name in ("analysis.json", "paper_draft.md", "resource_report.json"):
+                        item = path.parent / "evidence" / name
+                        if item.is_file() and (entry := self.register(item)):
+                            outputs.append(entry)
+                    scheduled = state["reader_calls_scheduled"]
+                    total = scheduled + scheduled // 6 + min(24, scheduled // 12) * 2 + 2
+                    project = {"id": state["id"], "autonomous": True, "revision": 1, "question": state["question"],
+                        "reader_followup": True, "model_budgets": state["budget"], "model_usage": state["charged_or_reserved"],
+                        "status": state["status"], "phase": state["phase"], "fixture_only": False,
+                        "holdout_exposed": state["evaluation_exposed"], "attempt": state["completed_tasks"], "max_candidates": total,
+                        "trials": [], "best_score": None, "model_calls": sum(o["tasks"] for o in state["operations"].values()),
+                        "model_tokens_charged_or_reserved": sum(state["charged_or_reserved"].values()),
+                        "model_token_limit": sum(state["budget"].values()), "reviews": [], "last_error": state.get("last_error"),
+                        "stop_reason": state.get("reason"), "progress": {"split": state["phase"], "completed": state["completed_tasks"], "total": total},
+                        "artifacts": outputs}
+                    value["projects"].append(project)
+                    value["totals"]["active"] += int(state["status"] == "running")
+                    if state["status"] in {"needs_attention", "stopped"}:
+                        value["alerts"].append({"source": state["id"], "message": state.get("last_error") or state.get("reason") or state["status"]})
+                except (OSError, ValueError, KeyError, TypeError):
+                    value["alerts"].append({"source": path.parent.name, "message": "读者实验记录暂不可读"})
             value["events"] = sorted(value["events"], key=lambda e: e.get("time", ""), reverse=True)[:80]
             self.cache = json.loads(redact(json.dumps(value, ensure_ascii=False)))
             self.cache_at = time.monotonic()

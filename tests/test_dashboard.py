@@ -62,6 +62,22 @@ def test_partial_json_does_not_break_other_records(workspace):
     assert any(x["source"] == "broken" for x in result["alerts"])
 
 
+def test_reader_followup_projection_preserves_budget_and_hides_private_route(workspace):
+    path = workspace / "projects/followup/reader-study-state.json"
+    state = {"id": "followup", "question": "A fixed protocol", "status": "needs_attention", "phase": "readers",
+        "reader_calls_scheduled": 1152, "completed_tasks": 14, "evaluation_exposed": True,
+        "operations": {"batch": {"tasks": 12}}, "charged_or_reserved": {"deepseek": 500, "kimi": 800},
+        "budget": {"deepseek": 1000, "kimi": 2000}, "last_error": "Receipt requires inspection",
+        "worker_identity": {"base_url": "private-route", "ledger_directory": "private-ledger"}}
+    write_json(path, state)
+    view = DashboardStore(workspace, EmptyLedger()).snapshot(force=True)
+    project = next(p for p in view["projects"] if p["id"] == "followup")
+    assert project["reader_followup"] and project["progress"] == {"split": "readers", "completed": 14, "total": 1394}
+    assert project["model_usage"] == state["charged_or_reserved"] and project["model_token_limit"] == 3000
+    assert "private-route" not in json.dumps(view) and "private-ledger" not in json.dumps(view)
+    assert any(a["source"] == "followup" for a in view["alerts"])
+
+
 def test_live_integrity_check_detects_modified_evidence(workspace):
     root = workspace / "outputs/demo"
     write_json(root / "state.json", {"schema_version": 1, "status": "completed", "jobs": {}})
